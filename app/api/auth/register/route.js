@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import bcrypt from 'bcryptjs';
 import connectDB from '@/lib/db/mongodb';
 import User from '@/lib/db/models/user';
+import { sendVerificationEmail } from '@/lib/utils/emailService';
 
 export async function POST(request) {
   try {
@@ -33,25 +34,40 @@ export async function POST(request) {
       );
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
     // Create new user
-    const user = await User.create({
+    const user = new User({
       name,
       email,
-      password: hashedPassword,
-      role: 'user', // Default role
+      password,
+      role: 'user',
     });
 
-    // Remove password from response
-    const { password: _, ...userWithoutPassword } = user.toObject();
+    // Generate verification token
+    const verificationToken = user.generateEmailVerificationToken();
+
+    // Save user
+    await user.save();
+
+    // Send verification email
+    try {
+      await sendVerificationEmail(email, name, verificationToken);
+    } catch (emailError) {
+      console.error('Failed to send verification email:', emailError);
+      // Delete user if email fails
+      await User.deleteOne({ _id: user._id });
+      return NextResponse.json(
+        { error: 'Failed to send verification email' },
+        { status: 500 }
+      );
+    }
+
+    // Remove sensitive data from response
+    const { password: _, emailVerificationToken: __, ...userWithoutSensitiveData } = user.toObject();
 
     return NextResponse.json(
       {
-        message: 'Registration successful',
-        user: userWithoutPassword
+        message: 'Registration successful! Please check your email to verify your account.',
+        user: userWithoutSensitiveData
       },
       { status: 201 }
     );
