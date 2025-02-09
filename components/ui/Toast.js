@@ -1,6 +1,9 @@
-// components/ui/Toast.js
-import React, { useEffect } from 'react';
+'use client';
+
+import React, { useEffect, createContext, useContext, useState } from 'react';
 import { CheckCircle, XCircle, AlertCircle, X } from 'lucide-react';
+
+const ToastContext = createContext(null);
 
 export function Toast({ message, type = 'success', onClose }) {
   useEffect(() => {
@@ -24,7 +27,7 @@ export function Toast({ message, type = 'success', onClose }) {
   };
 
   return (
-    <div className={`fixed bottom-4 right-4 z-50 animate-slide-up`}>
+    <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
       <div className={`flex items-center space-x-2 p-4 rounded-lg border ${styles[type]}`}>
         {icons[type]}
         <p className="text-sm font-medium">{message}</p>
@@ -38,11 +41,6 @@ export function Toast({ message, type = 'success', onClose }) {
     </div>
   );
 }
-
-// Toast Context for global management
-import { createContext, useContext, useState } from 'react';
-
-const ToastContext = createContext(null);
 
 export function ToastProvider({ children }) {
   const [toast, setToast] = useState(null);
