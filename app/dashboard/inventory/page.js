@@ -1,214 +1,227 @@
 'use client';
 
-import { useState } from 'react';
-import { useInventory } from '@/lib/hooks/useInventory';
-import { useSearchAndFilter } from '@/lib/hooks/useSearchAndFilter';
-import { DataTable } from '@/components/ui/DataTable';
-import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardContent } from '@/components/ui/Card';
+import { useState, useEffect } from 'react';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
-  SearchBar, 
-  FilterSelect, 
-  DateRangeFilter, 
-  FilterPanel 
-} from '@/components/ui/SearchAndFilter';
-import Link from 'next/link';
-import { Loader2, AlertTriangle } from 'lucide-react';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DroploadMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { useToast } from '@/components/ui/use-toast';
+import { BarChart, Activity, AlertTriangle, Package } from 'lucide-react';
 
-const bloodTypeOptions = [
-  { value: 'all', label: 'All Blood Types' },
-  { value: 'A+', label: 'A+' },
-  { value: 'A-', label: 'A-' },
-  { value: 'B+', label: 'B+' },
-  { value: 'B-', label: 'B-' },
-  { value: 'AB+', label: 'AB+' },
-  { value: 'AB-', label: 'AB-' },
-  { value: 'O+', label: 'O+' },
-  { value: 'O-', label: 'O-' },
-];
+export default function InventoryDashboard() {
+  const [inventory, setInventory] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('overview');
+  const { toast } = useToast();
 
-const statusOptions = [
-  { value: 'all', label: 'All Status' },
-  { value: 'available', label: 'Available' },
-  { value: 'reserved', label: 'Reserved' },
-  { value: 'used', label: 'Used' },
-  { value: 'expired', label: 'Expired' },
-];
+  useEffect(() => {
+    fetchInventory();
+  }, []);
 
-export default function InventoryPage() {
-  const { inventory, isLoading, error, deleteInventoryItem } = useInventory();
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const fetchInventory = async () => {
+    try {
+      const response = await fetch('/api/inventory/blood-units');
+      const data = await response.json();
 
-  const searchConfig = {
-    searchFields: ['bloodBagId', 'bloodType', 'status'],
-    defaultSort: 'collectionDate'
-  };
-
-  const {
-    searchQuery,
-    setSearchQuery,
-    filters,
-    updateFilter,
-    resetFilters,
-    sortBy,
-    sortDirection,
-    toggleSort,
-    filteredItems
-  } = useSearchAndFilter(inventory, searchConfig);
-
-  const columns = [
-    { 
-      key: 'bloodBagId',
-      label: 'Blood Bag ID',
-      sortable: true
-    },
-    { 
-      key: 'bloodType',
-      label: 'Blood Type',
-      sortable: true
-    },
-    { 
-      key: 'status',
-      label: 'Status',
-      render: (status) => (
-        <span className={getStatusBadgeClass(status)}>
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </span>
-      )
-    },
-    { 
-      key: 'collectionDate',
-      label: 'Collection Date',
-      sortable: true,
-      render: (date) => new Date(date).toLocaleDateString()
-    },
-    { 
-      key: 'expiryDate',
-      label: 'Expiry Date',
-      sortable: true,
-      render: (date) => {
-        const expiryDate = new Date(date);
-        const today = new Date();
-        const daysUntilExpiry = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
-        
-        return (
-          <div className="flex items-center gap-2">
-            <span>{expiryDate.toLocaleDateString()}</span>
-            {daysUntilExpiry <= 7 && daysUntilExpiry > 0 && (
-              <AlertTriangle className="h-4 w-4 text-yellow-500" 
-                title={`Expires in ${daysUntilExpiry} days`}
-              />
-            )}
-            {daysUntilExpiry <= 0 && (
-              <AlertTriangle className="h-4 w-4 text-red-500" 
-                title="Expired"
-              />
-            )}
-          </div>
-        );
+      if (data.status === 'success') {
+        setInventory(data.data);
+      } else {
+        throw new Error(data.message);
       }
-    },
-    {
-      key: 'actions',
-      label: 'Actions',
-      render: (_, item) => (
-        <div className="flex space-x-2">
-          <Link href={`/dashboard/inventory/${item._id}`}>
-            <Button variant="secondary" size="sm">View</Button>
-          </Link>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => handleDelete(item._id)}
-          >
-            Delete
-          </Button>
-        </div>
-      ),
-    },
-  ];
-
-  const handleSort = (key) => {
-    if (columns.find(col => col.key === key)?.sortable) {
-      toggleSort(key);
+    } catch (err) {
+      setError(err.message);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Failed to fetch inventory data"
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const getStatusBadgeClass = (status) => {
-    const classes = {
-      available: 'bg-green-100 text-green-800',
-      reserved: 'bg-yellow-100 text-yellow-800',
-      used: 'bg-gray-100 text-gray-800',
-      expired: 'bg-red-100 text-red-800'
-    };
-    return `px-2 py-1 rounded-full text-xs font-medium ${classes[status] || 'bg-gray-100 text-gray-800'}`;
+  const calculateExpiringUnits = () => {
+    if (!inventory?.units) return 0;
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+    
+    return inventory.units.filter(unit => 
+      new Date(unit.expiryDate) <= thirtyDaysFromNow && 
+      unit.status === 'available'
+    ).length;
   };
+
+  if (loading) {
+    return <div className="flex justify-center items-center h-screen">Loading...</div>;
+  }
 
   if (error) {
     return (
-      <Card>
-        <div className="text-center text-red-600 p-4">
-          Error loading inventory: {error}
-        </div>
-      </Card>
+      <Alert variant="destructive">
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="container mx-auto p-4 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold">Blood Inventory</h1>
-        <Link href="/dashboard/inventory/add">
-          <Button>Add Blood Unit</Button>
-        </Link>
+        <h1 className="text-2xl font-bold">Blood Inventory Management</h1>
+        <Button
+          onClick={() => setActiveTab('add')}
+          className="flex items-center gap-2"
+        >
+          <Package className="w-4 h-4" />
+          Add Blood Unit
+        </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <FilterPanel onReset={resetFilters}>
-            <SearchBar
-              value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search blood bags..."
-            />
-            <FilterSelect
-              label="Blood Type"
-              options={bloodTypeOptions}
-              value={filters.bloodType || 'all'}
-              onChange={(value) => updateFilter('bloodType', value)}
-            />
-            <FilterSelect
-              label="Status"
-              options={statusOptions}
-              value={filters.status || 'all'}
-              onChange={(value) => updateFilter('status', value)}
-            />
-            <DateRangeFilter
-              startDate={startDate}
-              endDate={endDate}
-              onStartDateChange={setStartDate}
-              onEndDateChange={setEndDate}
-            />
-          </FilterPanel>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex justify-center items-center p-8">
-              <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Total Units</CardTitle>
+            <Package className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {inventory?.units?.length || 0}
             </div>
-          ) : (
-            <DataTable 
-              columns={columns}
-              data={filteredItems}
-              sortBy={sortBy}
-              sortDirection={sortDirection}
-              onSort={handleSort}
-              emptyMessage="No blood units found"
-            />
-          )}
-        </CardContent>
-      </Card>
+            <p className="text-xs text-muted-foreground">
+              Available blood units
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Expiring Soon</CardTitle>
+            <AlertTriangle className="w-4 h-4 text-yellow-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {calculateExpiringUnits()}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Units expiring within 30 days
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Critical Types</CardTitle>
+            <Activity className="w-4 h-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {inventory?.summary?.filter(s => s.count < 10).length || 0}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Blood types below threshold
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Monthly Trend</CardTitle>
+            <BarChart className="w-4 h-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">+12%</div>
+            <p className="text-xs text-muted-foreground">
+              Compared to last month
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Content Tabs */}
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="inventory">Inventory List</TabsTrigger>
+          <TabsTrigger value="add">Add Unit</TabsTrigger>
+          <TabsTrigger value="storage">Storage Management</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview">
+          <Card>
+            <CardHeader>
+              <CardTitle>Blood Type Distribution</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Blood Type</TableHead>
+                    <TableHead>Available Units</TableHead>
+                    <TableHead>Total Volume (ml)</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {inventory?.summary?.map((item) => (
+                    <TableRow key={item._id}>
+                      <TableCell className="font-medium">{item._id}</TableCell>
+                      <TableCell>{item.count}</TableCell>
+                      <TableCell>{item.totalVolume}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs ${
+                            item.count < 10
+                              ? 'bg-red-100 text-red-800'
+                              : item.count < 20
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}
+                        >
+                          {item.count < 10
+                            ? 'Critical'
+                            : item.count < 20
+                            ? 'Low'
+                            : 'Normal'}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* We'll add other tab contents in separate components */}
+        <TabsContent value="inventory">
+          {/* Will add InventoryList component */}
+        </TabsContent>
+
+        <TabsContent value="add">
+          {/* Will add AddBloodUnit component */}
+        </TabsContent>
+
+        <TabsContent value="storage">
+          {/* Will add StorageManagement component */}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
