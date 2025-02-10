@@ -7,117 +7,100 @@ export async function GET(request) {
   try {
     await connectDB();
     const { searchParams } = new URL(request.url);
+    
+    // Pagination parameters
     const page = parseInt(searchParams.get('page')) || 1;
     const limit = parseInt(searchParams.get('limit')) || 10;
-    const search = searchParams.get('search') || '';
+    const skip = (page - 1) * limit;
+
+    // Filtering parameters
     const bloodType = searchParams.get('bloodType');
     const status = searchParams.get('status');
+    const searchTerm = searchParams.get('search');
 
-    const skip = (page - 1) * limit;
+    // Build query
     const query = {};
-
-    // Add search filters
-    if (search) {
+    if (bloodType) query.bloodType = bloodType;
+    if (status) query.status = status;
+    if (searchTerm) {
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
-        { phone: { $regex: search, $options: 'i' } }
+        { name: { $regex: searchTerm, $options: 'i' } },
+        { email: { $regex: searchTerm, $options: 'i' } },
+        { phone: { $regex: searchTerm, $options: 'i' } }
       ];
     }
 
-    if (bloodType) {
-      query.bloodType = bloodType;
-    }
+    // Get donors with pagination
+    const [donors, totalDonors] = await Promise.all([
+      Donor.find(query)
+        .sort({ lastDonationDate: -1 })
+        .skip(skip)
+        .limit(limit),
+      Donor.countDocuments(query)
+    ]);
 
-    if (status) {
-      query.status = status;
-    }
+    // Get donation statistics for each donor
+    const donorsWithStats = await Promise.all(
+      donors.map(async (donor) => {
+        const donorObj = donor.toObject();
+        
+        // Get donation history
+        const donations = await Donation.find({ donorId: donor._id })
+          .sort({ donationDate: -1 });
 
-    // Get donors with their donation history
-    const donors = await Donor.aggregate([
-      { $match: query },
-      {
-        $lookup: {
-          from: 'donations',
-          localField: '_id',
-          foreignField: 'donorId',
-          as: 'donationHistory'
-        }
-      },
-      {
-        $addFields: {
-          totalDonations: { $size: '$donationHistory' },
-          lastDonation: { $max: '$donationHistory.donationDate' },
-          nextEligibleDate: {
-            $dateAdd: {
-              startDate: { $max: '$donationHistory.donationDate' },
-              unit: 'month',
-              amount: 3
-            }
+        // Calculate statistics
+        const totalDonations = donations.length;
+        const totalVolume = donations.reduce((sum, d) => sum + (d.volume || 0), 0);
+        const lastDonation = donations[0]?.donationDate;
+        
+        // Calculate next eligible date
+        const nextEligibleDate = lastDonation 
+          ? new Date(lastDonation.getTime() + (90 * 24 * 60 * 60 * 1000))
+          : null;
+
+        // Check eligibility
+        const isEligible = !lastDonation || 
+          new Date() >= new Date(lastDonation.getTime() + (90 * 24 * 60 * 60 * 1000));
+
+        return {
+          ...donorObj,
+          statistics: {
+            totalDonations,
+            totalVolume,
+            lastDonation,
+            nextEligibleDate,
+            isEligible,
+            donationHistory: donations.map(d => ({
+              date: d.donationDate,
+              volume: d.volume,
+              center: d.center,
+              notes: d.notes
+            }))
           }
-        }
-      },
-      { $skip: skip },
-      { $limit: limit },
-      {
-        $project: {
-          name: 1,
-          email: 1,
-          phone: 1,
-          bloodType: 1,
-          status: 1,
-          address: 1,
-          totalDonations: 1,
-          lastDonation: 1,
-          nextEligibleDate: 1,
-          donationHistory: {
-            $slice: ['$donationHistory', -5] // Get last 5 donations
-          }
-        }
-      }
-    ]);
+        };
+      })
+    );
 
-    // Get total count for pagination
-    const total = await Donor.countDocuments(query);
-
-    // Get donation statistics
-    const donationStats = await Donation.aggregate([
-      {
-        $group: {
-          _id: {
-            year: { $year: '$donationDate' },
-            month: { $month: '$donationDate' }
-          },
-          count: { $sum: 1 }
-        }
-      },
-      { $sort: { '_id.year': -1, '_id.month': -1 } },
-      { $limit: 12 }
-    ]);
-
-    // Get blood type distribution
-    const bloodTypeStats = await Donor.aggregate([
-      {
-        $group: {
-          _id: '$bloodType',
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    // Get overall statistics
+    const overallStats = {
+      totalDonors: totalDonors,
+      activeDonors: await Donor.countDocuments({ status: 'active' }),
+      totalDonations: await Donation.countDocuments(),
+      donorsByBloodType: await Donor.aggregate([
+        { $group: { _id: '$bloodType', count: { $sum: 1 } } }
+      ])
+    };
 
     return NextResponse.json({
       success: true,
       data: {
-        donors,
+        donors: donorsWithStats,
+        stats: overallStats,
         pagination: {
-          total,
-          pages: Math.ceil(total / limit),
-          page,
-          limit
-        },
-        stats: {
-          donations: donationStats,
-          bloodTypes: bloodTypeStats
+          total: totalDonors,
+          pages: Math.ceil(totalDonors / limit),
+          currentPage: page,
+          perPage: limit
         }
       }
     });
@@ -153,7 +136,7 @@ export async function PUT(request) {
       data: updatedDonor
     });
   } catch (error) {
-    console.error('Update donor error:', error);
+    console.error('Donor update error:', error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }
