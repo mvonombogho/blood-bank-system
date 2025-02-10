@@ -33,44 +33,37 @@ export async function GET(request) {
       }
     };
 
-    // Add donorId to query if specified
+    // Add donorId to query if provided
     if (donorId) {
       query.donorId = donorId;
     }
 
-    // Fetch donation history
-    const donationHistory = await Donation.find(query)
+    // Get donation history with donor information
+    const donations = await Donation.find(query)
       .populate('donorId', 'name bloodType')
       .sort({ donationDate: 1 });
 
-    // Calculate trends and statistics
-    const monthlyTrends = await Donation.aggregate([
-      {
-        $match: query
-      },
-      {
-        $group: {
-          _id: {
-            year: { $year: '$donationDate' },
-            month: { $month: '$donationDate' }
-          },
-          totalDonations: { $sum: 1 },
-          totalVolume: { $sum: '$volume' }
-        }
-      },
-      {
-        $sort: {
-          '_id.year': 1,
-          '_id.month': 1
-        }
+    // Calculate statistics
+    const totalDonations = donations.length;
+    const totalVolume = donations.reduce((sum, d) => sum + (d.volume || 0), 0);
+    
+    // Monthly trends
+    const monthlyTrends = {};
+    donations.forEach(donation => {
+      const monthKey = donation.donationDate.toISOString().slice(0, 7); // YYYY-MM format
+      if (!monthlyTrends[monthKey]) {
+        monthlyTrends[monthKey] = {
+          count: 0,
+          volume: 0
+        };
       }
-    ]);
+      monthlyTrends[monthKey].count++;
+      monthlyTrends[monthKey].volume += donation.volume || 0;
+    });
 
-    // Calculate donation frequency by blood type
+    // Blood type distribution
     const bloodTypeStats = await Donation.aggregate([
-      {
-        $match: query
-      },
+      { $match: query },
       {
         $lookup: {
           from: 'donors',
@@ -79,71 +72,72 @@ export async function GET(request) {
           as: 'donor'
         }
       },
-      {
-        $unwind: '$donor'
-      },
+      { $unwind: '$donor' },
       {
         $group: {
           _id: '$donor.bloodType',
-          totalDonations: { $sum: 1 },
-          averageVolume: { $avg: '$volume' }
+          count: { $sum: 1 },
+          totalVolume: { $sum: '$volume' }
         }
       }
     ]);
 
-    // Calculate donor return rate
-    const donorStats = await Donor.aggregate([
+    // Frequency analysis
+    const frequencyStats = await Donation.aggregate([
+      { $match: query },
       {
-        $lookup: {
-          from: 'donations',
-          localField: '_id',
-          foreignField: 'donorId',
-          as: 'donations'
+        $group: {
+          _id: '$donorId',
+          count: { $sum: 1 },
+          averageVolume: { $avg: '$volume' },
+          lastDonation: { $max: '$donationDate' },
+          firstDonation: { $min: '$donationDate' }
         }
       },
       {
         $project: {
-          name: 1,
-          bloodType: 1,
-          donationCount: { $size: '$donations' }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          singleTimeDonors: {
-            $sum: { $cond: [{ $eq: ['$donationCount', 1] }, 1, 0] }
-          },
-          repeatDonors: {
-            $sum: { $cond: [{ $gt: ['$donationCount', 1] }, 1, 0] }
-          },
-          totalDonors: { $sum: 1 }
+          count: 1,
+          averageVolume: 1,
+          lastDonation: 1,
+          firstDonation: 1,
+          daysBetweenDonations: {
+            $divide: [
+              { $subtract: ['$lastDonation', '$firstDonation'] },
+              1000 * 60 * 60 * 24 * ($count - 1)
+            ]
+          }
         }
       }
     ]);
 
-    // Format monthly trends for chart display
-    const formattedTrends = monthlyTrends.map(trend => ({
-      date: `${trend._id.year}-${String(trend._id.month).padStart(2, '0')}`,
-      donations: trend.totalDonations,
-      volume: trend.totalVolume
-    }));
+    // Success rate (completed vs cancelled/deferred donations)
+    const successStats = await Donation.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: '$status',
+          count: { $sum: 1 }
+        }
+      }
+    ]);
 
     return NextResponse.json({
       success: true,
       data: {
-        donationHistory,
-        trends: {
-          monthly: formattedTrends,
-          bloodType: bloodTypeStats
+        overview: {
+          totalDonations,
+          totalVolume,
+          averageVolumePerDonation: totalDonations ? totalVolume / totalDonations : 0
         },
-        donorStats: donorStats[0],
-        summary: {
-          totalDonations: donationHistory.length,
-          totalVolume: donationHistory.reduce((sum, d) => sum + (d.volume || 0), 0),
-          averageVolume: donationHistory.length > 0 
-            ? donationHistory.reduce((sum, d) => sum + (d.volume || 0), 0) / donationHistory.length
-            : 0
+        donations,
+        trends: {
+          monthly: Object.entries(monthlyTrends).map(([month, data]) => ({
+            month,
+            ...data
+          })),
+          bloodTypes: bloodTypeStats,
+          frequency: frequencyStats,
+          successRate: successStats
         }
       }
     });
