@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import BloodInventory from '@/models/bloodInventory';
 import Donor from '@/models/donor';
+import { sendEmail } from '@/lib/email';
 
 export async function GET() {
   try {
@@ -14,14 +15,24 @@ export async function GET() {
       units: { $lt: 10 }
     });
 
-    lowInventory.forEach(item => {
+    for (const item of lowInventory) {
       notifications.push({
         type: 'low_inventory',
         severity: 'high',
         message: `Low inventory alert: ${item.bloodType} (${item.units} units remaining)`,
         timestamp: new Date()
       });
-    });
+
+      // Send email to admin
+      await sendEmail({
+        type: 'low_inventory',
+        recipient: process.env.ADMIN_EMAIL,
+        data: {
+          bloodType: item.bloodType,
+          units: item.units
+        }
+      });
+    }
 
     // Check for expiring blood units
     const sevenDaysFromNow = new Date();
@@ -34,14 +45,25 @@ export async function GET() {
       }
     });
 
-    expiringUnits.forEach(item => {
+    for (const item of expiringUnits) {
       notifications.push({
         type: 'expiring_units',
         severity: 'medium',
         message: `Blood units expiring soon: ${item.bloodType} (expires ${item.expiryDate.toLocaleDateString()})`,
         timestamp: new Date()
       });
-    });
+
+      // Send email to admin
+      await sendEmail({
+        type: 'expiring_units',
+        recipient: process.env.ADMIN_EMAIL,
+        data: {
+          bloodType: item.bloodType,
+          units: item.units,
+          expiryDate: item.expiryDate
+        }
+      });
+    }
 
     // Get eligible donors for reminder
     const threeMonthsAgo = new Date();
@@ -53,7 +75,7 @@ export async function GET() {
       }
     }).select('name email lastDonationDate');
 
-    eligibleDonors.forEach(donor => {
+    for (const donor of eligibleDonors) {
       notifications.push({
         type: 'donor_eligible',
         severity: 'low',
@@ -61,7 +83,17 @@ export async function GET() {
         timestamp: new Date(),
         donorId: donor._id
       });
-    });
+
+      // Send email to donor
+      await sendEmail({
+        type: 'donor_eligible',
+        recipient: donor.email,
+        data: {
+          name: donor.name,
+          lastDonationDate: donor.lastDonationDate
+        }
+      });
+    }
 
     // Sort notifications by severity and timestamp
     const sortedNotifications = notifications.sort((a, b) => {
@@ -77,6 +109,7 @@ export async function GET() {
       data: sortedNotifications
     });
   } catch (error) {
+    console.error('Notification error:', error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }
@@ -86,18 +119,25 @@ export async function GET() {
 
 export async function POST(request) {
   try {
-    const { notificationType, recipientEmail, message } = await request.json();
+    const { notificationType, recipientEmail, message, data } = await request.json();
 
-    // Here you would integrate with your email service provider
-    // For example: SendGrid, AWS SES, etc.
-    // For now, we'll just log the notification
-    console.log(`Sending ${notificationType} notification to ${recipientEmail}: ${message}`);
+    // Send email notification
+    const result = await sendEmail({
+      type: notificationType,
+      recipient: recipientEmail,
+      data: data || {}
+    });
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
 
     return NextResponse.json({
       success: true,
       message: 'Notification sent successfully'
     });
   } catch (error) {
+    console.error('Failed to send notification:', error);
     return NextResponse.json(
       { success: false, error: error.message },
       { status: 500 }
